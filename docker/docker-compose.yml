@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  ai-trading:
+    build: .
+    env_file:
+      - .env
+    environment:
+      APP_ENV: development
+      DRY_RUN: "true"
+      PYTHONUNBUFFERED: "1"
+    command: python main.py
