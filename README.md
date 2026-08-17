@@ -1,12 +1,11 @@
 ﻿# Toss AI Trading System
 
-Toss증권 Open API, Finnhub, Claude AI를 활용하는 자동매매 및 투자분석 프로젝트입니다.
+Toss증권 Open API를 활용하는 기본·퀀트 투자분석 보고서 프로젝트입니다.
 
 ## 주요 기능
 - Toss증권 Open API 기반 실시간 시세/주문 연동
-- Finnhub 뉴스 수집
 - 기술적 분석 (RSI, MACD, Bollinger Bands, 변동성, Sharpe Ratio)
-- Claude AI 기반 종목 선정 및 투자 판단
+- Toss 차트 기반 기본 지표 종목 선정
 - 예산 기반 종목 선별
 - 승인/거절 기반 주문 흐름
 - SQLite 저장소를 통한 분석/거래 로그 보관
@@ -26,35 +25,25 @@ Toss증권 Open API, Finnhub, Claude AI를 활용하는 자동매매 및 투자�
 ## 준비 사항
 1. Python 3.11 이상 권장
 2. Toss증권 Open API Client ID / Client Secret 발급
-3. Claude API Key 준비
-4. Finnhub API Key 선택 사항
 
 ## 환경 변수 예시
 실제 키는 코드에 직접 넣지 말고 `.env` 파일에 넣으세요. 프로젝트 루트에 `.env`를 만들고 아래처럼 설정합니다.
 
 ```env
-APP_ENV=development
-DRY_RUN=true
-TOSS_ENVIRONMENT=dry-run
-TOSS_USE_DEMO=true
+APP_ENV=production
 
 TOSS_CLIENT_ID=your_toss_client_id_here
 TOSS_CLIENT_SECRET=your_toss_client_secret_here
 TOSS_ACCOUNT_NUMBER=1234567890
-# TOSS_ACCOUNT_PASSWORD=your_toss_account_password_here  # 실거래 시 콘솔에서 직접 입력 가능
 TOSS_ACCOUNT_SEQ=1234567890
 TOSS_BASE_URL=https://api.tossinvest.com
 TOSS_TOKEN_URL=https://api.tossinvest.com/oauth2/token
 TOSS_REQUIRE_PHONE_APPROVAL=true
 TOSS_APPROVAL_WAIT_SECONDS=60
-# TOSS_PHONE_APPROVED=true  # Toss 폰 인증 완료 후 자동 진행 시 사용
 
-CLAUDE_API_KEY=your_claude_key
-FINNHUB_API_KEY=your_finnhub_key
 GMAIL_ADDRESS=your@gmail.com
 GMAIL_APP_PASSWORD=your_app_password
-EMAIL_APPROVAL_MODE=local
-# 실제 Gmail 답장 수신을 쓰려면: EMAIL_APPROVAL_MODE=gmail
+EMAIL_APPROVAL_MODE=gmail
 
 TRADING_BUDGET=1000000
 MAX_POSITION_RATIO=0.5
@@ -68,9 +57,9 @@ PowerShell에서 바로 만들려면:
 powershell -ExecutionPolicy Bypass -File .\scripts\set_env_example.ps1
 ```
 
-## 안전 모드와 실행
+## 실행 방법
 
-기본 동작은 dry-run 모드입니다. 실제 주문을 보내지 않고 로직/검증/리스크 체크만 수행합니다.
+이 시스템은 실거래 모드로만 작동합니다. 모든 주문은 Toss증권 API를 통해 실제로 전송됩니다.
 
 ### 로컬 실행
 
@@ -79,30 +68,11 @@ pip install -r requirements.txt
 python main.py
 ```
 
-실전 거래를 전환하려면 `.env` 또는 실행 환경에서 다음 값을 설정하세요.
-
-```env
-DRY_RUN=false
-APP_ENV=production
-TOSS_ENVIRONMENT=live
-TOSS_USE_DEMO=false
-EMAIL_APPROVAL_MODE=gmail
-```
-
-`EMAIL_APPROVAL_MODE=local`은 dry-run/로컬 테스트용입니다. 실제 Gmail 답장 응답을 사용하려면 `gmail`로 바꾸고 Gmail 앱 비밀번호를 설정하세요.
-
 ### Windows에서 바로 실행
 
 ```bat
 scripts\setup_venv.bat
-scripts\run_dry_run.bat
 scripts\run_local.bat
-```
-
-### Python으로 바로 dry-run 점검
-
-```bash
-python scripts/run_dry_run.py
 ```
 
 ### Docker 실행
@@ -170,3 +140,22 @@ docker compose build --no-cache
 - 이 프로젝트는 Toss증권 Open API 인증 방식에 맞춰 설계되었습니다.
 - 실제 주문은 API 문서 기준의 엔드포인트와 응답 구조를 따라야 하며, 운영 전 문서와 함께 테스트가 필요합니다.
 - 일부 도구는 실제 API가 없을 경우에도 로컬 테스트가 가능하도록 기본 폴백을 두고 있습니다.
+
+
+Toss 차트
+├─ 30일 수익률
+├─ RSI
+├─ MACD
+├─ 볼린저 밴드
+├─ 변동성
+├─ Sharpe Ratio
+├─ 거래량 비율
+└─ 기술 신호 강도
+
+추가 필터
+├─ 예산 범위
+├─ 종목당 투자 한도
+└─ 기본 점수 기반 fallback 선정
+
+외부 보조 데이터
+└─ Toss 현재가·일봉 차트
