@@ -7,5 +7,4 @@ if not exist .venv (
 )
 
 call .venv\Scripts\activate.bat
-set DRY_RUN=true
 python main.py

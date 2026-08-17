@@ -22,7 +22,6 @@ class TossAPI:
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
         base_url: Optional[str] = None,
-        use_demo: bool = False,
         account_seq: Optional[str] = None,
     ):
         self.client_id = client_id or os.getenv("TOSS_CLIENT_ID", "")
@@ -32,14 +31,9 @@ class TossAPI:
         self.account_seq = account_seq or os.getenv("TOSS_ACCOUNT_SEQ") or os.getenv("TOSS_ACCOUNT_NUMBER")
         self.access_token = None
         self.token_type = "Bearer"
-        self.use_demo = bool(use_demo)
-        self.dry_run = self.use_demo or str(os.getenv("DRY_RUN", "false")).strip().lower() in {"1", "true", "yes", "y", "on"}
 
         logger.info("🔗 Toss증권 API 초기화")
-        if not self.dry_run:
-            self.get_access_token()
-        else:
-            logger.warning("🧪 DRY_RUN: Toss access token 발급을 건너뛰고 모의 동작을 사용합니다.")
+        self.get_access_token()
 
     @staticmethod
     def _find_payload(data: Any, keys: List[str]) -> Any:
@@ -50,11 +44,7 @@ class TossAPI:
                 return data[key]
         return data
 
-    def _request(self, method, path, params=None, json_data=None, headers=None, timeout=20):
-        if self.dry_run:
-            logger.warning("🧪 DRY_RUN: Toss API 호출을 생략하고 None을 반환합니다. path=%s", path)
-            return None
-
+    def _request(self, method, path, params=None, json_data=None, headers=None, timeout=20, retry_auth=True):
         if not self.access_token:
             self.get_access_token()
 
@@ -81,6 +71,20 @@ class TossAPI:
             except ValueError:
                 payload = {"raw": response.text}
 
+            if response.status_code == 401 and self.access_token and retry_auth:
+                logger.warning("⚠️ Toss access token이 만료되었거나 유효하지 않아 재발급합니다.")
+                self.access_token = None
+                if self.get_access_token():
+                    return self._request(
+                        method,
+                        path,
+                        params=params,
+                        json_data=json_data,
+                        headers=headers,
+                        timeout=timeout,
+                        retry_auth=False,
+                    )
+
             if response.status_code >= 400:
                 logger.error("❌ Toss API 오류: status=%s path=%s payload=%s", response.status_code, path, payload)
                 return None
@@ -90,10 +94,6 @@ class TossAPI:
             return None
 
     def get_access_token(self) -> bool:
-        if self.dry_run:
-            logger.warning("🧪 DRY_RUN: 토큰 발급을 건너뜁니다.")
-            return False
-
         if not self.client_id or not self.client_secret:
             logger.warning("⚠️ Toss API 인증 정보가 없습니다. 토큰 발급을 건너뜁니다.")
             return False
@@ -130,7 +130,7 @@ class TossAPI:
         }
 
     def get_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
-        payload = self._request("GET", "/api/v1/market/quote", params={"symbol": symbol})
+        payload = self._request("GET", "/api/v1/prices", params={"symbols": symbol})
         if not payload:
             return None
 
@@ -143,21 +143,22 @@ class TossAPI:
         return {
             "symbol": symbol,
             "current_price": float(data.get("currentPrice") or data.get("price") or data.get("lastPrice") or 0),
-            "open_price": float(data.get("openPrice") or data.get("open") or 0),
-            "high_price": float(data.get("highPrice") or data.get("high") or 0),
-            "low_price": float(data.get("lowPrice") or data.get("low") or 0),
-            "volume": int(data.get("volume") or data.get("accVolume") or 0),
+            "open_price": 0,
+            "high_price": 0,
+            "low_price": 0,
+            "volume": 0,
             "timestamp": datetime.now().isoformat(),
+            "currency": data.get("currency"),
         }
 
     def get_daily_chart(self, symbol: str, period: int = 30) -> Optional[List[Dict[str, Any]]]:
-        payload = self._request("GET", "/api/v1/market/chart", params={"symbol": symbol, "interval": "D", "count": period})
+        payload = self._request("GET", "/api/v1/candles", params={"symbol": symbol, "interval": "1d", "count": period})
         if not payload:
             return None
 
         data = self._find_payload(payload, ["data", "result", "candles", "chart", "body"])
         if isinstance(data, dict):
-            data = data.get("items") or data.get("candles") or data.get("series") or []
+            data = data.get("candles") or data.get("items") or data.get("series") or []
         if not isinstance(data, list):
             return None
 
@@ -173,6 +174,23 @@ class TossAPI:
                     "volume": int(item.get("volume") or item.get("tradingVolume") or 0),
                 })
         return chart_data
+
+    def list_stocks(self, market: str) -> Optional[List[Dict[str, Any]]]:
+        payload = self._request(
+            "GET",
+            "/api/v1/stocks/all",
+            params={
+                "market": market,
+                "status": "ACTIVE",
+                "securityType": "STOCK",
+                "commonShare": "true",
+            },
+        )
+        if not payload:
+            return None
+
+        data = self._find_payload(payload, ["data", "result", "output", "body"])
+        return data if isinstance(data, list) else []
 
     def get_account_balance(self, account_number: str) -> Optional[Dict[str, Any]]:
         account_key = account_number or self.account_seq
@@ -210,54 +228,3 @@ class TossAPI:
                 })
         return holdings
 
-    def place_order(
-        self,
-        account_number: str,
-        password: Optional[str] = None,
-        symbol: Optional[str] = None,
-        quantity: int = 0,
-        price: Any = 0,
-        order_type: str = "00",
-        is_buy: Optional[bool] = None,
-    ) -> Optional[Dict[str, Any]]:
-        account_key = account_number or self.account_seq
-        if not account_key or not symbol:
-            logger.warning("⚠️ Toss 주문 불가: account 또는 symbol 없음")
-            return None
-
-        order_side = "BUY" if is_buy is not False else "SELL"
-        order_payload = {
-            "symbol": symbol,
-            "quantity": int(quantity),
-            "side": order_side,
-            "orderType": "MARKET" if order_type == "00" else "LIMIT",
-        }
-        if price not in (None, 0, "0"):
-            order_payload["price"] = int(price)
-        if password:
-            order_payload["password"] = password
-
-        result = self._request("POST", "/api/v1/orders", json_data=order_payload, headers={"X-Tossinvest-Account": account_key})
-        if not result:
-            return None
-
-        data = self._find_payload(result, ["data", "result", "body"])
-        if isinstance(data, dict):
-            return {
-                "order_number": data.get("orderId") or data.get("orderNumber") or data.get("id"),
-                "symbol": symbol,
-                "status": data.get("status") or "SUCCESS",
-                "raw": data,
-            }
-        return {"order_number": None, "symbol": symbol, "status": "SUCCESS", "raw": result}
-
-    def cancel_order(self, account_number: str, order_number: str, symbol: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        account_key = account_number or self.account_seq
-        if not account_key or not order_number:
-            return None
-
-        payload = self._request("DELETE", f"/api/v1/orders/{order_number}", headers={"X-Tossinvest-Account": account_key})
-        data = self._find_payload(payload, ["data", "result", "body"])
-        if isinstance(data, dict):
-            return data
-        return payload

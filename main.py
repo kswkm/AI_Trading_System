@@ -1,23 +1,5 @@
-"""
-Toss증권 기반 AI 트레이딩 시스템
+"""Toss 차트 기반 기본·퀀트 분석 보고서 시스템."""
 
-전체 workflow:
-
-1. 후보 종목 데이터 수집
-2. 예산 내 종목 필터링
-3. AI StockSelector
-4. Quant 분석
-5. 뉴스 수집
-6. Claude 종합 분석
-7. 이메일 보고서
-8. 종목별 승인/거절
-9. 승인된 종목만 주문
-10. 예산 기반 주문 수량 계산
-"""
-
-import getpass
-import schedule
-import time
 import logging
 import os
 
@@ -26,12 +8,9 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from config import (
-    DAILY_ANALYSIS_TIME,
     GMAIL_ADDRESS,
     GMAIL_APP_PASSWORD,
-    CLAUDE_API_KEY,
-    FINNHUB_API_KEY,
-    STOCKS,
+    SYMBOL_SCAN_LIMIT,
     RECIPIENT_EMAIL,
     LOG_LEVEL,
     LOG_FILE,
@@ -40,33 +19,16 @@ from config import (
     MAX_SELECTED_STOCKS,
     TOSS_CLIENT_ID,
     TOSS_CLIENT_SECRET,
-    TOSS_ACCOUNT_NUMBER,
-    TOSS_ACCOUNT_PASSWORD,
-    TOSS_ACCOUNT_SEQ,
-    TOSS_BASE_URL,
-    BROKER,
-    DRY_RUN,
     validate_runtime_config,
 )
-
-from data.stock_selector import StockSelector
 
 from data.data_collector import TossDataCollector
 
 from analysis.quant_analyzer import QuantAnalyzer
 
-from analysis.ai_analyzer import AIAnalyzer
-
 from communication.report_generator import ReportGenerator
 
 from communication.email_manager import EmailManager
-
-from database.database import TradingDatabase
-
-from trading.smart_timeout import SmartTimeoutSystem
-
-from trading.order_executor import OrderExecutor
-
 
 # =========================================================
 # 환경변수
@@ -95,36 +57,11 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-validation = validate_runtime_config(require_live_trading=not DRY_RUN)
+validation = validate_runtime_config()
 for warning in validation.get("warnings", []):
     logger.warning(warning)
 
-if not DRY_RUN:
-    logger.info("🚨 실전 거래 모드: 주문이 실제 Toss API로 전송됩니다.")
-else:
-    logger.info("🧪 DRY_RUN 모드 활성화: 실제 주문은 전송되지 않고 시뮬레이션만 수행됩니다.")
-
-
-def prompt_for_toss_password() -> str:
-    """실거래 시마다 사용자가 직접 Toss 비밀번호를 입력하도록 한다."""
-    env_password = str(os.getenv("TOSS_ACCOUNT_PASSWORD", "")).strip()
-    if env_password:
-        return env_password
-
-    if DRY_RUN:
-        return ""
-
-    print("\n=== Toss 비밀번호 입력 ===")
-    print("실거래 전용입니다. 비밀번호는 화면에 보이지 않고, 메모리에서만 사용됩니다.")
-    try:
-        password = getpass.getpass("TOSS_ACCOUNT_PASSWORD를 직접 입력하세요: ")
-    except (EOFError, KeyboardInterrupt):
-        return ""
-
-    password = str(password).strip()
-    if password:
-        os.environ["TOSS_ACCOUNT_PASSWORD"] = password
-    return password
+logger.info("📊 분석 보고서 전용 모드: 주문과 결제를 실행하지 않습니다.")
 
 
 class AITradingSystemKI:
@@ -134,7 +71,10 @@ class AITradingSystemKI:
     # 초기화
     # =====================================================
 
-    def __init__(self):
+    def __init__(self, trading_budget=None, recipient_email=None):
+
+        self.trading_budget = float(trading_budget) if trading_budget is not None else float(TRADING_BUDGET)
+        self.recipient_email = recipient_email or RECIPIENT_EMAIL or "kswkmy7556@gmail.com"
 
         logger.info("=" * 70)
 
@@ -159,48 +99,15 @@ class AITradingSystemKI:
             or TOSS_CLIENT_SECRET
         )
 
-        toss_account_number = (
-            os.getenv("TOSS_ACCOUNT_NUMBER")
-            or TOSS_ACCOUNT_NUMBER
-        )
-
-        toss_account_password = (
-            os.getenv("TOSS_ACCOUNT_PASSWORD")
-            or TOSS_ACCOUNT_PASSWORD
-            or prompt_for_toss_password()
-        )
-
-        toss_account_seq = (
-            os.getenv("TOSS_ACCOUNT_SEQ")
-            or TOSS_ACCOUNT_SEQ
-        )
-
-        toss_base_url = (
-            os.getenv("TOSS_BASE_URL")
-            or TOSS_BASE_URL
-        )
-
-        if not toss_account_number and toss_account_seq:
-            toss_account_number = toss_account_seq
-
         if not all([
             toss_client_id,
             toss_client_secret,
-            toss_account_number,
         ]):
             raise ValueError(
                 "❌ Toss증권 API 설정이 부족합니다. "
-                "TOSS_CLIENT_ID / TOSS_CLIENT_SECRET / TOSS_ACCOUNT_NUMBER 를 확인하세요."
+                "TOSS_CLIENT_ID / TOSS_CLIENT_SECRET 를 확인하세요."
             )
 
-        self.broker = BROKER
-        self.dry_run = DRY_RUN
-
-        if not self.dry_run and not toss_account_password:
-            raise ValueError(
-                "❌ 실거래 모드에서는 Toss 비밀번호를 직접 입력해야 합니다. "
-                "콘솔에서 비밀번호를 입력하거나 TOSS_ACCOUNT_PASSWORD를 설정하세요."
-            )
 
         # -------------------------------------------------
         # 데이터 수집기
@@ -210,20 +117,7 @@ class AITradingSystemKI:
             TossDataCollector(
                 app_key=toss_client_id,
                 app_secret=toss_client_secret,
-                finnhub_key=FINNHUB_API_KEY,
-                use_demo=self.dry_run
             )
-        )
-
-        # -------------------------------------------------
-        # StockSelector
-        # -------------------------------------------------
-
-        self.stock_selector = StockSelector(
-            api_key=CLAUDE_API_KEY,
-            trading_budget=TRADING_BUDGET,
-            max_position_ratio=MAX_POSITION_RATIO,
-            max_selected_stocks=MAX_SELECTED_STOCKS
         )
 
         # -------------------------------------------------
@@ -234,15 +128,6 @@ class AITradingSystemKI:
             QuantAnalyzer()
         )
 
-        # -------------------------------------------------
-        # AI Analyzer
-        # -------------------------------------------------
-
-        self.ai_analyzer = AIAnalyzer(
-            api_key=CLAUDE_API_KEY
-        )
-
-        # -------------------------------------------------
         # Report
         # -------------------------------------------------
 
@@ -259,55 +144,22 @@ class AITradingSystemKI:
             gmail_app_password=GMAIL_APP_PASSWORD
         )
 
-        # -------------------------------------------------
-        # Database
-        # -------------------------------------------------
-
-        self.database = TradingDatabase()
-
-        # -------------------------------------------------
-        # Order Executor
-        # -------------------------------------------------
-
-        self.executor = OrderExecutor(
-            app_key=toss_client_id,
-            app_secret=toss_client_secret,
-            account_number=toss_account_number,
-            account_password=toss_account_password,
-            use_demo=self.dry_run,
-            trading_budget=TRADING_BUDGET,
-            max_position_ratio=MAX_POSITION_RATIO,
-            dry_run=self.dry_run,
-        )
-
-        # -------------------------------------------------
-        # Timeout
-        # -------------------------------------------------
-
-        self.timeout_system = (
-            SmartTimeoutSystem(
-                email_manager=self.email_manager,
-                executor=self.executor,
-                database=self.database
-            )
-        )
-
         logger.info(
             "✅ 모든 모듈 초기화 완료"
         )
 
         logger.info(
-            f"📋 후보 종목: {', '.join(STOCKS)}"
+            f"📋 Toss 동적 후보 조회 상한: {SYMBOL_SCAN_LIMIT}개"
         )
 
         logger.info(
             f"💰 거래 예산: "
-            f"{TRADING_BUDGET:,.0f}원"
+            f"{self.trading_budget:,.0f}원"
         )
 
         logger.info(
             f"📊 종목당 최대: "
-            f"{TRADING_BUDGET * MAX_POSITION_RATIO:,.0f}원"
+            f"{self.trading_budget * MAX_POSITION_RATIO:,.0f}원"
         )
 
         logger.info("=" * 70)
@@ -338,15 +190,14 @@ class AITradingSystemKI:
                 "\n1️⃣ 후보 종목 데이터 수집 중..."
             )
 
-            raw_data = (
-                self.data_collector.collect_all(
-                    STOCKS
-                )
+            discovered_symbols = self.data_collector.discover_symbols(
+                limit=SYMBOL_SCAN_LIMIT
             )
+            raw_data = self.data_collector.collect_all(discovered_symbols)
 
             available_symbols = [
                 symbol
-                for symbol in STOCKS
+                for symbol in discovered_symbols
                 if raw_data.get(symbol)
             ]
 
@@ -397,6 +248,7 @@ class AITradingSystemKI:
                     "symbol": symbol,
                     "current_price":
                         current_price,
+                    "currency": stock_data.get("currency", "USD"),
                     "return_30d": 0,
                     "volatility": 0,
                     "volume_ratio": 1,
@@ -537,29 +389,34 @@ class AITradingSystemKI:
 
             # =================================================
             # STEP 3
-            # AI StockSelector
+            # 기본 지표 점수 기반 종목 선정
             # =================================================
 
-            print(
-                "\n3️⃣ AI 종목 선정 중..."
-            )
+            print("\n3️⃣ 기본 지표 기반 종목 선정 중...")
 
-            selected_symbols = (
-                self.stock_selector.select_stocks(
-                    candidates=candidates,
-                    market_data=(
-                        "한국 주식시장 후보 종목을 "
-                        "기술적 지표와 위험을 고려하여 "
-                        "분석합니다."
-                    ),
-                    top_n=MAX_SELECTED_STOCKS
-                )
-            )
+            def basic_score(candidate):
+                score = 0
+                return_30d = candidate.get("return_30d", 0)
+                volume_ratio = candidate.get("volume_ratio", 1)
+                volatility = candidate.get("volatility", 100)
 
-            print(
-                f"   🤖 AI 선정 종목: "
-                f"{', '.join(selected_symbols)}"
-            )
+                if return_30d > 0:
+                    score += min(return_30d, 20)
+                if volume_ratio > 1:
+                    score += min(volume_ratio * 5, 15)
+                if volatility < 30:
+                    score += 10
+                elif volatility > 50:
+                    score -= 10
+                return score
+
+            candidates.sort(key=basic_score, reverse=True)
+            selected_symbols = [
+                candidate["symbol"]
+                for candidate in candidates[:MAX_SELECTED_STOCKS]
+            ]
+
+            print(f"   📊 기본 선정 종목: {', '.join(selected_symbols)}")
 
             if not selected_symbols:
 
@@ -599,53 +456,7 @@ class AITradingSystemKI:
 
             # =================================================
             # STEP 5
-            # 뉴스 수집
-            # =================================================
-
-            print(
-                "\n5️⃣ 뉴스 수집 중..."
-            )
-
-            news_data = (
-                self.data_collector.get_latest_news(
-                    selected_symbols
-                )
-            )
-
-            print("   ✅ 완료")
-
-            # =================================================
-            # STEP 6
-            # AI 종합 분석
-            # =================================================
-
-            print(
-                "\n6️⃣ AI 종합 분석 중..."
-            )
-
-            ai_results = {}
-
-            for stock in selected_symbols:
-
-                if not quant_results.get(stock):
-                    continue
-
-                ai_results[stock] = (
-                    self.ai_analyzer.analyze(
-                        stock,
-                        quant_results[stock],
-                        news_data.get(
-                            stock,
-                            "뉴스 없음"
-                        )
-                    )
-                )
-
-            print("   ✅ 완료")
-
-            # =================================================
-            # STEP 7
-            # 보고서 생성
+            # 기본·퀀트 분석 보고서 생성
             # =================================================
 
             print(
@@ -655,34 +466,44 @@ class AITradingSystemKI:
             analysis_data = []
 
             for stock in selected_symbols:
-
-                if not ai_results.get(stock):
+                quant_result = quant_results.get(stock)
+                if not quant_result:
                     continue
 
+                signal_strength = quant_result["signal_strength"]
+                recommendation = (
+                    "BUY" if signal_strength >= 60
+                    else "SELL" if signal_strength <= 40
+                    else "HOLD"
+                )
+                current_price = quant_result["current_price"]
+
                 analysis_item = {
-
-                    "symbol":
-                        stock,
-
-                    "current_price":
-                        quant_results[stock][
-                            "current_price"
-                        ],
-
-                    "recipient_email":
-                        RECIPIENT_EMAIL,
-
-                    **ai_results[stock]
+                    "symbol": stock,
+                    "current_price": current_price,
+                    "currency": raw_data[stock].get("currency", "USD"),
+                    "recommendation": recommendation,
+                    "confidence": signal_strength,
+                    "price_target": current_price * (1.05 if recommendation == "BUY" else 0.95 if recommendation == "SELL" else 1.0),
+                    "stop_loss": current_price * (0.97 if recommendation == "BUY" else 1.03 if recommendation == "SELL" else 0.95),
+                    "time_horizon": "단기 (30거래일)",
+                    "summary": "Toss 차트의 기술지표와 통계값만 사용한 정량 분석 결과입니다.",
+                    "key_reasons": [
+                        f"RSI: {quant_result['rsi']:.1f}",
+                        f"MACD: {quant_result['macd']:.4f}",
+                        f"30일 수익률: {quant_result['return_30d']:.2f}%",
+                        f"연환산 변동성: {quant_result['volatility']:.2f}%",
+                        f"Sharpe Ratio: {quant_result['sharpe_ratio']:.2f}",
+                    ],
+                    "risks": [
+                        "과거 차트 기반 지표로 미래 수익을 보장하지 않습니다.",
+                        "시장 변동성과 거래 가능 시간을 확인해야 합니다.",
+                    ],
+                    "catalyst": "기술적 신호 변화",
                 }
 
                 analysis_data.append(
                     analysis_item
-                )
-
-                self.database.save_analysis(
-                    symbol=stock,
-                    analysis_data=analysis_item,
-                    status="PENDING"
                 )
 
             if not analysis_data:
@@ -700,76 +521,28 @@ class AITradingSystemKI:
             print("   ✅ 완료")
 
             # =================================================
-            # STEP 8
-            # 승인 요청 이메일
+            # STEP 6
+            # 분석 보고서 이메일
             # =================================================
 
             print(
-                "\n8️⃣ 승인 요청 이메일 발송..."
+                "\n8️⃣ 투자 분석 보고서 이메일 발송..."
             )
 
-            self.email_manager.send_approval_request(
-                recipient=RECIPIENT_EMAIL,
-                analysis_data=analysis_data
+            self.email_manager.send_report(
+                recipient=self.recipient_email,
+                subject="[Toss 정량 분석] 기본·퀀트 분석 보고서",
+                html_report=html_report,
             )
 
             print("   ✅ 완료")
-
-            # =================================================
-            # STEP 9
-            # 사용자 승인 대기
-            # =================================================
-
-            print(
-                "\n9️⃣ 사용자 종목별 "
-                "승인/거절 대기..."
-            )
-
-            decision = (
-                self.timeout_system
-                .wait_for_user_decision(
-                    analysis_data
-                )
-            )
-
-            # =================================================
-            # STEP 10
-            # 결정 처리
-            # =================================================
-
-            print(
-                "\n🔟 사용자 결정 처리 중..."
-            )
-
-            result = (
-                self.timeout_system
-                .process_decision(
-                    decision,
-                    analysis_data
-                )
-            )
 
             print(
                 "\n" + "=" * 70
             )
 
             print(
-                f"✅ 일일 workflow 완료"
-            )
-
-            print(
-                f"결정: "
-                f"{result.get('decision')}"
-            )
-
-            print(
-                f"승인: "
-                f"{result.get('approved', [])}"
-            )
-
-            print(
-                f"거절: "
-                f"{result.get('rejected', [])}"
+                f"✅ 투자 분석 보고서 생성 및 발송 완료"
             )
 
             print(
@@ -783,23 +556,13 @@ class AITradingSystemKI:
                 exc_info=True
             )
 
-            self.email_manager.send_error_email(
-                recipient=RECIPIENT_EMAIL,
-                error_message=str(e)
-            )
+            logger.error("보고서 생성/발송 실패로 종료합니다.")
 
     # =====================================================
     # scheduler
     # =====================================================
 
     def start(self):
-
-        schedule.every().day.at(
-            DAILY_ANALYSIS_TIME
-        ).do(
-            self.daily_workflow
-        )
-
         logger.info("=" * 70)
 
         logger.info(
@@ -807,58 +570,40 @@ class AITradingSystemKI:
         )
 
         logger.info(
-            f"📅 매일 "
-            f"{DAILY_ANALYSIS_TIME} 실행"
-        )
-
-        logger.info(
             f"💰 거래 예산: "
-            f"{TRADING_BUDGET:,.0f}원"
+            f"{self.trading_budget:,.0f}원"
         )
 
         logger.info(
-            "🤖 AI가 분석 대상 종목 선정"
+            "📌 실행 시점에 즉시 분석을 시작합니다"
         )
 
         logger.info(
-            "👤 사용자 종목별 승인 대기"
-        )
-
-        logger.info(
-            "⏰ 다음날 07:00 자동 거절"
+            "📧 분석 보고서를 이메일로 발송합니다"
         )
 
         logger.info("=" * 70)
 
-        while True:
-
-            try:
-
-                schedule.run_pending()
-
-                time.sleep(60)
-
-            except KeyboardInterrupt:
-
-                logger.info(
-                    "⛔ 시스템 중지"
-                )
-
-                break
-
-            except Exception as e:
-
-                logger.error(
-                    f"❌ 스케줄러 오류: {e}",
-                    exc_info=True
-                )
-
-                time.sleep(60)
+        self.daily_workflow()
 
 
 # =========================================================
 # main
 # =========================================================
+
+def prompt_for_budget():
+    while True:
+        raw = input("거래 예산을 원 단위로 입력하세요 (예: 1000000): ").strip()
+        try:
+            value = float(raw.replace(",", ""))
+        except ValueError:
+            print("숫자를 정확히 입력해주세요.")
+            continue
+        if value <= 0:
+            print("예산은 0보다 커야 합니다.")
+            continue
+        return int(value)
+
 
 def main():
 
@@ -869,7 +614,11 @@ def main():
         in sys.argv
     )
 
-    system = AITradingSystemKI()
+    budget = prompt_for_budget()
+    system = AITradingSystemKI(
+        trading_budget=budget,
+        recipient_email="kswkmy7556@gmail.com",
+    )
 
     if test_mode:
 
