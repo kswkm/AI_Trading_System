@@ -6,7 +6,6 @@ services:
     env_file:
       - .env
     environment:
-      APP_ENV: development
-      DRY_RUN: "true"
+      APP_ENV: production
       PYTHONUNBUFFERED: "1"
     command: python main.py

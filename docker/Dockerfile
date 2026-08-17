@@ -4,8 +4,7 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DRY_RUN=true \
-    APP_ENV=development
+    APP_ENV=production
 
 COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
