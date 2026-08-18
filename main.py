@@ -2,6 +2,7 @@
 
 import logging
 import os
+from pathlib import Path
 
 from datetime import datetime
 
@@ -39,6 +40,8 @@ load_dotenv()
 # =========================================================
 # 로깅
 # =========================================================
+
+Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=LOG_LEVEL,
