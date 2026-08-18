@@ -13,9 +13,6 @@ This project must not store real broker credentials directly in Python source fi
 
 - `TOSS_CLIENT_ID`
 - `TOSS_CLIENT_SECRET`
-- `TOSS_ACCOUNT_NUMBER`
-- `TOSS_ACCOUNT_PASSWORD`
-- `TOSS_ACCOUNT_SEQ`
 - `TOSS_BASE_URL`
 - `TOSS_TOKEN_URL`
 

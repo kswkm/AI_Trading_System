@@ -71,10 +71,11 @@ class AITradingSystemKI:
     # 초기화
     # =====================================================
 
-    def __init__(self, trading_budget=None, recipient_email=None):
+    def __init__(self, trading_budget=None, recipient_email=None, additional_symbols=None):
 
         self.trading_budget = float(trading_budget) if trading_budget is not None else float(TRADING_BUDGET)
         self.recipient_email = recipient_email or RECIPIENT_EMAIL or "kswkmy7556@gmail.com"
+        self.additional_symbols = list(dict.fromkeys(additional_symbols or []))
 
         logger.info("=" * 70)
 
@@ -193,11 +194,19 @@ class AITradingSystemKI:
             discovered_symbols = self.data_collector.discover_symbols(
                 limit=SYMBOL_SCAN_LIMIT
             )
-            raw_data = self.data_collector.collect_all(discovered_symbols)
+            requested_symbols = list(dict.fromkeys(
+                discovered_symbols + self.additional_symbols
+            ))
+            if self.additional_symbols:
+                print(
+                    "   ➕ 추가 분석 요청 종목: "
+                    f"{', '.join(self.additional_symbols)}"
+                )
+            raw_data = self.data_collector.collect_all(requested_symbols)
 
             available_symbols = [
                 symbol
-                for symbol in discovered_symbols
+                for symbol in requested_symbols
                 if raw_data.get(symbol)
             ]
 
@@ -392,13 +401,31 @@ class AITradingSystemKI:
             # 기본 지표 점수 기반 종목 선정
             # =================================================
 
-            print("\n3️⃣ 기본 지표 기반 종목 선정 중...")
+            print("\n3️⃣ 기본·퀀트 지표 기반 종목 선정 중...")
+
+            print("   📊 전체 후보 퀀트 지표 계산 중...")
+            candidate_quant_results = {}
+            for candidate in candidates:
+                symbol = candidate["symbol"]
+                result = self.quant_analyzer.analyze_stock(
+                    symbol,
+                    raw_data[symbol].get("historical_data", [])
+                )
+                if result:
+                    candidate_quant_results[symbol] = result
+            print("   ✅ 전체 후보 퀀트 지표 계산 완료")
 
             def basic_score(candidate):
-                score = 0
+                score = 0.0
                 return_30d = candidate.get("return_30d", 0)
                 volume_ratio = candidate.get("volume_ratio", 1)
                 volatility = candidate.get("volatility", 100)
+                quant_result = candidate_quant_results.get(candidate["symbol"], {})
+                rsi = quant_result.get("rsi", 50)
+                macd = quant_result.get("macd", 0)
+                signal_line = quant_result.get("signal_line", 0)
+                bb_position = quant_result.get("bb_position", 0.5)
+                sharpe_ratio = quant_result.get("sharpe_ratio", 0)
 
                 if return_30d > 0:
                     score += min(return_30d, 20)
@@ -408,15 +435,35 @@ class AITradingSystemKI:
                     score += 10
                 elif volatility > 50:
                     score -= 10
+
+                if 45 <= rsi <= 65:
+                    score += 8
+                elif rsi < 30 or rsi > 70:
+                    score -= 5
+
+                score += 6 if macd > signal_line else -6
+
+                if 0.2 <= bb_position <= 0.8:
+                    score += 5
+                elif bb_position < 0.1 or bb_position > 0.9:
+                    score -= 3
+
+                score += max(-5, min(5, sharpe_ratio * 2))
                 return score
 
             candidates.sort(key=basic_score, reverse=True)
-            selected_symbols = [
+            ranked_symbols = [
                 candidate["symbol"]
                 for candidate in candidates[:MAX_SELECTED_STOCKS]
             ]
+            selected_symbols = list(dict.fromkeys(
+                ranked_symbols + [
+                    symbol for symbol in self.additional_symbols
+                    if symbol in available_symbols
+                ]
+            ))
 
-            print(f"   📊 기본 선정 종목: {', '.join(selected_symbols)}")
+            print(f"   📊 기본·퀀트 선정 종목: {', '.join(selected_symbols)}")
 
             if not selected_symbols:
 
@@ -435,11 +482,11 @@ class AITradingSystemKI:
                 "\n4️⃣ 퀀트 분석 중..."
             )
 
-            quant_results = {}
+            quant_results = dict(candidate_quant_results)
 
             for stock in selected_symbols:
 
-                if not raw_data.get(stock):
+                if not raw_data.get(stock) or stock in quant_results:
                     continue
 
                 quant_results[stock] = (
@@ -559,7 +606,7 @@ class AITradingSystemKI:
             logger.error("보고서 생성/발송 실패로 종료합니다.")
 
     # =====================================================
-    # scheduler
+    # 실행
     # =====================================================
 
     def start(self):
@@ -605,6 +652,22 @@ def prompt_for_budget():
         return int(value)
 
 
+def prompt_for_additional_symbols():
+    raw = input(
+        "추가로 분석할 종목을 입력하세요 "
+        "(쉼표로 구분, 없으면 Enter): "
+    ).strip()
+    if not raw:
+        return []
+
+    symbols = []
+    for value in raw.replace("\n", ",").split(","):
+        symbol = value.strip().upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    return symbols
+
+
 def main():
 
     import sys
@@ -615,9 +678,11 @@ def main():
     )
 
     budget = prompt_for_budget()
+    additional_symbols = prompt_for_additional_symbols()
     system = AITradingSystemKI(
         trading_budget=budget,
         recipient_email="kswkmy7556@gmail.com",
+        additional_symbols=additional_symbols,
     )
 
     if test_mode:

@@ -2,43 +2,35 @@
 
 ## 전체 흐름
 
-1. 후보 종목 수집
-2. 시세/차트 수집
-3. 예산 기반 필터링
-4. 기술적 분석
-5. AI 기반 종목 선정
-6. 뉴스 요약
-7. 최종 투자 판단
-8. 승인/거절
-9. Toss증권 주문 실행
-10. 결과 저장 및 리포트 전송
+1. Toss 종목 마스터에서 국내·해외 후보 조회
+2. Toss 현재가와 일봉 차트 수집
+3. 예산 범위에 맞는 후보 구성
+4. 기본 지표 계산
+5. RSI, MACD, Bollinger Bands, 변동성, Sharpe Ratio 계산
+6. 지표 점수로 추천 종목 선정
+7. 사용자가 입력한 추가 종목을 합쳐 보고서 생성
+8. Gmail로 HTML 분석 보고서 발송
 
 ## 디렉터리 역할
 
-- `api/`: 증권사 API 어댑터
-- `analysis/`: 퀀트 및 AI 분석 로직
-- `communication/`: 이메일/리포트
-- `data/`: 실시간 데이터 수집
-- `database/`: SQLite 저장
-- `trading/`: 주문/리스크 로직
-- `docs/`: 문서
-- `config/`: 환경변수 예제
+- `api/`: Toss증권 OAuth 및 시장 데이터 API 어댑터
+- `analysis/`: 퀀트 지표와 신호 계산
+- `communication/`: 이메일 발송과 HTML 보고서 생성
+- `data/`: Toss 종목 목록·시세·차트 수집
+- `docs/`: 설치·보안·구조 문서
+- `docker/`: 컨테이너 실행 설정
+- `scripts/`: Windows 로컬 실행 보조 스크립트
 
 ## 핵심 파일
 
-- `main.py`: 전체 워크플로 실행
-- `config.py`: 설정 값 로딩
-- `api/toss_api.py`: Toss증권 OAuth 및 주문 API
-- `data/data_collector.py`: 시세, 차트, 뉴스 수집
-- `analysis/quant_analyzer.py`: RSI, MACD, Bollinger Bands 계산
-- `analysis/ai_analyzer.py`: AI 평가
-- `trading/order_executor.py`: 주문 실행기
+- `main.py`: 실행 시 예산·추가 종목을 받고 전체 분석 흐름 실행
+- `config.py`: 환경 변수와 분석 설정 로딩
+- `api/toss_api.py`: Toss증권 인증, 종목 마스터, 현재가, 캔들 API
+- `data/data_collector.py`: 국내·해외 후보와 시장 데이터 수집
+- `analysis/quant_analyzer.py`: RSI, MACD, Bollinger Bands, 변동성, Sharpe Ratio
+- `communication/report_generator.py`: HTML 분석 보고서 생성
+- `communication/email_manager.py`: Gmail SMTP 보고서 발송
 
-## 브로커 추상화
+## 실행 범위
 
-현재 구조는 증권사별 구현을 따로 두고, 상위 로직은 공통 인터페이스를 사용하도록 설계되어 있습니다.
-
-이런 구조 덕분에 다음과 같은 전환이 가능합니다:
-- Toss API 구현체 교체
-- 다른 브로커 추가
-- 주문 전용/조회 전용 분리
+이 프로젝트는 투자 분석 보고서만 생성합니다. 주문, 결제, 승인 대기, 거래 실행 기능은 포함하지 않습니다.

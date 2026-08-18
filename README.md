@@ -3,12 +3,11 @@
 Toss증권 Open API를 활용하는 기본·퀀트 투자분석 보고서 프로젝트입니다.
 
 ## 주요 기능
-- Toss증권 Open API 기반 실시간 시세/주문 연동
+- Toss증권 Open API 기반 실시간 시세/차트 연동
 - 기술적 분석 (RSI, MACD, Bollinger Bands, 변동성, Sharpe Ratio)
 - Toss 차트 기반 기본 지표 종목 선정
 - 예산 기반 종목 선별
-- 승인/거절 기반 주문 흐름
-- SQLite 저장소를 통한 분석/거래 로그 보관
+- 기본 지표 및 퀀트 기반 종목 선별
 - 이메일 리포트 전송
 
 ## 프로젝트 구조
@@ -17,9 +16,7 @@ Toss증권 Open API를 활용하는 기본·퀀트 투자분석 보고서 프로
 - `api/toss_api.py`: Toss증권 API 어댑터
 - `data/data_collector.py`: 데이터 수집기
 - `analysis/quant_analyzer.py`: 퀀트 분석
-- `analysis/ai_analyzer.py`: AI 종합 분석
-- `trading/order_executor.py`: 매수/매도 실행
-- `database/database.py`: SQLite 저장
+- `analysis/quant_analyzer.py`: 퀀트 분석
 - `communication/`: 이메일 및 리포트
 
 ## 준비 사항
@@ -34,16 +31,12 @@ APP_ENV=production
 
 TOSS_CLIENT_ID=your_toss_client_id_here
 TOSS_CLIENT_SECRET=your_toss_client_secret_here
-TOSS_ACCOUNT_NUMBER=1234567890
-TOSS_ACCOUNT_SEQ=1234567890
 TOSS_BASE_URL=https://api.tossinvest.com
 TOSS_TOKEN_URL=https://api.tossinvest.com/oauth2/token
-TOSS_REQUIRE_PHONE_APPROVAL=true
-TOSS_APPROVAL_WAIT_SECONDS=60
 
 GMAIL_ADDRESS=your@gmail.com
 GMAIL_APP_PASSWORD=your_app_password
-EMAIL_APPROVAL_MODE=gmail
+RECIPIENT_EMAIL=your@gmail.com
 
 TRADING_BUDGET=1000000
 MAX_POSITION_RATIO=0.5
@@ -59,7 +52,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\set_env_example.ps1
 
 ## 실행 방법
 
-이 시스템은 실거래 모드로만 작동합니다. 모든 주문은 Toss증권 API를 통해 실제로 전송됩니다.
+이 시스템은 주문이나 결제를 실행하지 않고, Toss 시세·차트 기반 분석 보고서만 생성합니다.
 
 ### 로컬 실행
 
@@ -80,7 +73,7 @@ scripts\run_local.bat
 먼저 루트에 `.env`를 준비하세요. 실제 보안값은 코드에 넣지 않고 `.env`에만 넣습니다.
 
 ```bash
-copy .env.example .env
+copy env.example .env
 ```
 
 그 다음 Docker 컨테이너를 실행합니다.
@@ -124,17 +117,11 @@ docker compose down
 docker compose build --no-cache
 ```
 
-## 환경 검증
-
-프로그램은 시작 시 필수 환경 변수를 확인합니다.
-- `DRY_RUN=true`인 경우 실제 주문은 차단되고 경고만 기록됩니다.
-- `DRY_RUN=false`인 경우 Toss API 인증 정보가 모두 있어야만 실행됩니다.
-
 ## 문서
 - [docs/README.md](docs/README.md): 문서 인덱스
 - [docs/setup.md](docs/setup.md): 설치 및 환경 변수 설정
 - [docs/architecture.md](docs/architecture.md): 프로젝트 구조와 흐름
-- [.env.example](.env.example): 환경 변수 예시
+- [env.example](env.example): 환경 변수 예시
 
 ## 참고
 - 이 프로젝트는 Toss증권 Open API 인증 방식에 맞춰 설계되었습니다.

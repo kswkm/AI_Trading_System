@@ -2,5 +2,3 @@ numpy==2.5.2
 pandas==3.0.5
 python-dotenv==1.2.2
 Requests==2.34.2
-schedule==1.2.2
-transformers==5.15.0

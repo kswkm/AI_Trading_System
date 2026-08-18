@@ -54,9 +54,6 @@ GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 # Toss증권 Open API 설정
 TOSS_CLIENT_ID = os.getenv("TOSS_CLIENT_ID", "")
 TOSS_CLIENT_SECRET = os.getenv("TOSS_CLIENT_SECRET", "")
-TOSS_ACCOUNT_NUMBER = os.getenv("TOSS_ACCOUNT_NUMBER", "")
-TOSS_ACCOUNT_PASSWORD = os.getenv("TOSS_ACCOUNT_PASSWORD", "")
-TOSS_ACCOUNT_SEQ = os.getenv("TOSS_ACCOUNT_SEQ", "")
 TOSS_BASE_URL = os.getenv("TOSS_BASE_URL", "https://api.tossinvest.com")
 TOSS_TOKEN_URL = os.getenv("TOSS_TOKEN_URL", "https://api.tossinvest.com/oauth2/token")
 TOSS_REQUIRE_PHONE_APPROVAL = _as_bool(os.getenv("TOSS_REQUIRE_PHONE_APPROVAL"), default=False)
@@ -75,7 +72,7 @@ IB_CLIENT_ID = 1
 # ============================================================================
 # 분석 설정
 # ============================================================================
-SYMBOL_SCAN_LIMIT = int(os.getenv("SYMBOL_SCAN_LIMIT", "100"))
+SYMBOL_SCAN_LIMIT = int(os.getenv("SYMBOL_SCAN_LIMIT", "400"))
 DEFAULT_QUANTITY = int(os.getenv("DEFAULT_QUANTITY", "100"))
 MAX_POSITION_SIZE = int(os.getenv("MAX_POSITION_SIZE", "10000"))
 
@@ -90,11 +87,6 @@ APPROVAL_TIMEOUT_HOURS = int(os.getenv("APPROVAL_TIMEOUT_HOURS", "24"))
 # ============================================================================
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE = os.getenv("LOG_FILE", "trading_system.log")
-
-# ============================================================================
-# 데이터베이스 설정
-# ============================================================================
-DATABASE_PATH = os.getenv("DATABASE_PATH", "trading_history.db")
 
 # ============================================================================
 # 이메일 설정
