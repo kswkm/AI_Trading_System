@@ -1,4 +1,4 @@
-﻿# Toss AI Trading System
+﻿# Investment-email
 
 Toss증권 Open API를 활용하는 기본·퀀트 투자분석 보고서 프로젝트입니다.
 
