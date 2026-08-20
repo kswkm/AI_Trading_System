@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 class TossAPI:
     """Toss증권 Open API용 브로커 구현체"""
 
+    # 일부 WAF/CDN이 기본 requests User-Agent를 차단해 403을 반환하는 경우가 있어 명시적으로 지정한다
+    DEFAULT_USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+
     def __init__(
         self,
         client_id: Optional[str] = None,
@@ -51,6 +58,7 @@ class TossAPI:
         req_headers = {
             "Content-Type": "application/json",
             "Authorization": f"{self.token_type} {self.access_token}",
+            "User-Agent": self.DEFAULT_USER_AGENT,
         }
         if headers:
             req_headers.update(headers)
@@ -106,9 +114,22 @@ class TossAPI:
                     "client_id": self.client_id,
                     "client_secret": self.client_secret,
                 },
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": self.DEFAULT_USER_AGENT,
+                    "Accept": "application/json",
+                },
                 timeout=20,
             )
-            response.raise_for_status()
+
+            if response.status_code >= 400:
+                logger.error(
+                    "❌ Toss access token 발급 실패: status=%s body=%s",
+                    response.status_code,
+                    response.text[:500],
+                )
+                return False
+
             payload = response.json()
             self.access_token = payload.get("access_token")
             self.token_type = payload.get("token_type", "Bearer")

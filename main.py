@@ -20,12 +20,24 @@ from config import (
     MAX_SELECTED_STOCKS,
     TOSS_CLIENT_ID,
     TOSS_CLIENT_SECRET,
+    AI_RELIABILITY_ENABLED,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    DART_API_KEY,
+    SEC_USER_AGENT,
+    AI_NEWS_LIMIT,
+    AI_FILING_DAYS,
+    AI_CACHE_TTL_HOURS,
+    AI_FILING_EXCERPT_COUNT,
+    OLLAMA_TIMEOUT_SECONDS,
     validate_runtime_config,
 )
 
 from data.data_collector import TossDataCollector
 
 from analysis.quant_analyzer import QuantAnalyzer
+
+from ai.reliability_analyzer import AIReliabilityAnalyzer
 
 from communication.report_generator import ReportGenerator
 
@@ -74,11 +86,22 @@ class AITradingSystemKI:
     # 초기화
     # =====================================================
 
-    def __init__(self, trading_budget=None, recipient_email=None, additional_symbols=None):
+    def __init__(
+        self,
+        trading_budget=None,
+        recipient_email=None,
+        additional_symbols=None,
+        max_selected_stocks=None,
+        investment_horizon="SHORT",
+    ):
 
         self.trading_budget = float(trading_budget) if trading_budget is not None else float(TRADING_BUDGET)
         self.recipient_email = recipient_email or RECIPIENT_EMAIL or "kswkmy7556@gmail.com"
         self.additional_symbols = list(dict.fromkeys(additional_symbols or []))
+        self.max_selected_stocks = int(max_selected_stocks) if max_selected_stocks else MAX_SELECTED_STOCKS
+        self.investment_horizon = (investment_horizon or "SHORT").upper()
+        if self.investment_horizon not in ("SHORT", "LONG", "BOTH"):
+            self.investment_horizon = "SHORT"
 
         logger.info("=" * 70)
 
@@ -132,6 +155,23 @@ class AITradingSystemKI:
             QuantAnalyzer()
         )
 
+        # -------------------------------------------------
+        # AI 신뢰도 분석 (DART/SEC 공시 + 뉴스 + Ollama)
+        # -------------------------------------------------
+
+        self.ai_analyzer = AIReliabilityAnalyzer(
+            ollama_base_url=OLLAMA_BASE_URL,
+            ollama_model=OLLAMA_MODEL,
+            dart_api_key=DART_API_KEY,
+            sec_user_agent=SEC_USER_AGENT,
+            news_limit=AI_NEWS_LIMIT,
+            filing_days=AI_FILING_DAYS,
+            enabled=AI_RELIABILITY_ENABLED,
+            cache_ttl_hours=AI_CACHE_TTL_HOURS,
+            filing_excerpt_count=AI_FILING_EXCERPT_COUNT,
+            ollama_timeout_seconds=OLLAMA_TIMEOUT_SECONDS,
+        )
+
         # Report
         # -------------------------------------------------
 
@@ -164,6 +204,16 @@ class AITradingSystemKI:
         logger.info(
             f"📊 종목당 최대: "
             f"{self.trading_budget * MAX_POSITION_RATIO:,.0f}원"
+        )
+
+        logger.info(
+            f"📌 기본·퀀트 선정 종목 수: {self.max_selected_stocks}개"
+        )
+
+        horizon_labels = {"SHORT": "단기", "LONG": "장기", "BOTH": "단기+장기"}
+
+        logger.info(
+            f"📌 투자 방식: {horizon_labels[self.investment_horizon]}"
         )
 
         logger.info("=" * 70)
@@ -418,7 +468,8 @@ class AITradingSystemKI:
                     candidate_quant_results[symbol] = result
             print("   ✅ 전체 후보 퀀트 지표 계산 완료")
 
-            def basic_score(candidate):
+            def basic_score_short(candidate):
+                """단기(모멘텀 중심) 점수: 최근 수익률/거래량/RSI·MACD 추세를 우선시한다."""
                 score = 0.0
                 return_30d = candidate.get("return_30d", 0)
                 volume_ratio = candidate.get("volume_ratio", 1)
@@ -454,19 +505,69 @@ class AITradingSystemKI:
                 score += max(-5, min(5, sharpe_ratio * 2))
                 return score
 
-            candidates.sort(key=basic_score, reverse=True)
-            ranked_symbols = [
-                candidate["symbol"]
-                for candidate in candidates[:MAX_SELECTED_STOCKS]
+            def basic_score_long(candidate):
+                """장기(위험조정수익률 중심) 점수: 변동성 억제와 Sharpe Ratio를 우선시한다."""
+                score = 0.0
+                return_30d = candidate.get("return_30d", 0)
+                volatility = candidate.get("volatility", 100)
+                quant_result = candidate_quant_results.get(candidate["symbol"], {})
+                rsi = quant_result.get("rsi", 50)
+                macd = quant_result.get("macd", 0)
+                signal_line = quant_result.get("signal_line", 0)
+                bb_position = quant_result.get("bb_position", 0.5)
+                sharpe_ratio = quant_result.get("sharpe_ratio", 0)
+
+                if return_30d > 0:
+                    score += min(return_30d, 10)
+
+                if volatility < 20:
+                    score += 15
+                elif volatility < 35:
+                    score += 5
+                elif volatility > 60:
+                    score -= 15
+
+                if 40 <= rsi <= 70:
+                    score += 5
+
+                score += 3 if macd > signal_line else -3
+
+                if 0.15 <= bb_position <= 0.85:
+                    score += 3
+
+                score += max(-10, min(15, sharpe_ratio * 6))
+                return score
+
+            extra_symbols = [
+                symbol for symbol in self.additional_symbols
+                if symbol in available_symbols
             ]
+
+            selected_short_symbols = []
+            selected_long_symbols = []
+
+            if self.investment_horizon in ("SHORT", "BOTH"):
+                ranked_short = sorted(candidates, key=basic_score_short, reverse=True)
+                selected_short_symbols = list(dict.fromkeys(
+                    [c["symbol"] for c in ranked_short[: self.max_selected_stocks]]
+                    + extra_symbols
+                ))
+
+            if self.investment_horizon in ("LONG", "BOTH"):
+                ranked_long = sorted(candidates, key=basic_score_long, reverse=True)
+                selected_long_symbols = list(dict.fromkeys(
+                    [c["symbol"] for c in ranked_long[: self.max_selected_stocks]]
+                    + extra_symbols
+                ))
+
             selected_symbols = list(dict.fromkeys(
-                ranked_symbols + [
-                    symbol for symbol in self.additional_symbols
-                    if symbol in available_symbols
-                ]
+                selected_short_symbols + selected_long_symbols
             ))
 
-            print(f"   📊 기본·퀀트 선정 종목: {', '.join(selected_symbols)}")
+            if selected_short_symbols:
+                print(f"   📊 단기 선정 종목: {', '.join(selected_short_symbols)}")
+            if selected_long_symbols:
+                print(f"   📊 장기 선정 종목: {', '.join(selected_long_symbols)}")
 
             if not selected_symbols:
 
@@ -506,6 +607,35 @@ class AITradingSystemKI:
 
             # =================================================
             # STEP 5
+            # AI 신뢰도 분석 (DART/SEC 공시 + 뉴스 + Ollama)
+            # =================================================
+
+            print(
+                "\n5️⃣ AI 신뢰도 분석 중 (DART/SEC + Ollama)..."
+            )
+
+            ai_reliability_results = {}
+
+            for stock in selected_symbols:
+
+                quant_result = quant_results.get(stock)
+
+                if not quant_result:
+                    continue
+
+                try:
+                    ai_reliability_results[stock] = (
+                        self.ai_analyzer.analyze(stock, quant_result)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ {stock} AI 신뢰도 분석 실패: {e}"
+                    )
+
+            print("   ✅ 완료")
+
+            # =================================================
+            # STEP 6
             # 기본·퀀트 분석 보고서 생성
             # =================================================
 
@@ -515,10 +645,10 @@ class AITradingSystemKI:
 
             analysis_data = []
 
-            for stock in selected_symbols:
+            def build_analysis_item(stock, style, is_short):
                 quant_result = quant_results.get(stock)
                 if not quant_result:
-                    continue
+                    return None
 
                 signal_strength = quant_result["signal_strength"]
                 recommendation = (
@@ -528,15 +658,25 @@ class AITradingSystemKI:
                 )
                 current_price = quant_result["current_price"]
 
-                analysis_item = {
+                if is_short:
+                    price_target = current_price * (1.05 if recommendation == "BUY" else 0.95 if recommendation == "SELL" else 1.0)
+                    stop_loss = current_price * (0.97 if recommendation == "BUY" else 1.03 if recommendation == "SELL" else 0.95)
+                    time_horizon = "단기 (30거래일)"
+                else:
+                    price_target = current_price * (1.15 if recommendation == "BUY" else 0.85 if recommendation == "SELL" else 1.0)
+                    stop_loss = current_price * (0.90 if recommendation == "BUY" else 1.10 if recommendation == "SELL" else 0.90)
+                    time_horizon = "장기 (6개월 이상)"
+
+                return {
                     "symbol": stock,
                     "current_price": current_price,
                     "currency": raw_data[stock].get("currency", "USD"),
                     "recommendation": recommendation,
                     "confidence": signal_strength,
-                    "price_target": current_price * (1.05 if recommendation == "BUY" else 0.95 if recommendation == "SELL" else 1.0),
-                    "stop_loss": current_price * (0.97 if recommendation == "BUY" else 1.03 if recommendation == "SELL" else 0.95),
-                    "time_horizon": "단기 (30거래일)",
+                    "price_target": price_target,
+                    "stop_loss": stop_loss,
+                    "time_horizon": time_horizon,
+                    "investment_style": style,
                     "summary": "Toss 차트의 기술지표와 통계값만 사용한 정량 분석 결과입니다.",
                     "key_reasons": [
                         f"RSI: {quant_result['rsi']:.1f}",
@@ -550,11 +690,18 @@ class AITradingSystemKI:
                         "시장 변동성과 거래 가능 시간을 확인해야 합니다.",
                     ],
                     "catalyst": "기술적 신호 변화",
+                    "ai_reliability": ai_reliability_results.get(stock),
                 }
 
-                analysis_data.append(
-                    analysis_item
-                )
+            for stock in selected_short_symbols:
+                item = build_analysis_item(stock, "단기", True)
+                if item:
+                    analysis_data.append(item)
+
+            for stock in selected_long_symbols:
+                item = build_analysis_item(stock, "장기", False)
+                if item:
+                    analysis_data.append(item)
 
             if not analysis_data:
 
@@ -579,9 +726,12 @@ class AITradingSystemKI:
                 "\n8️⃣ 투자 분석 보고서 이메일 발송..."
             )
 
+            horizon_labels = {"SHORT": "단기", "LONG": "장기", "BOTH": "단기+장기"}
+            subject = f"[Toss 정량 분석] {horizon_labels[self.investment_horizon]} 투자 보고서"
+
             self.email_manager.send_report(
                 recipient=self.recipient_email,
-                subject="[Toss 정량 분석] 기본·퀀트 분석 보고서",
+                subject=subject,
                 html_report=html_report,
             )
 
@@ -671,6 +821,28 @@ def prompt_for_additional_symbols():
     return symbols
 
 
+def prompt_for_selected_stock_count():
+    raw = input(
+        f"기본·퀀트 선정 종목 수를 입력하세요 (Enter시 기본값 {MAX_SELECTED_STOCKS}개): "
+    ).strip()
+    if not raw:
+        return MAX_SELECTED_STOCKS
+    try:
+        value = int(raw)
+    except ValueError:
+        print("숫자를 정확히 입력해주세요. 기본값을 사용합니다.")
+        return MAX_SELECTED_STOCKS
+    return value if value > 0 else MAX_SELECTED_STOCKS
+
+
+def prompt_for_investment_horizon():
+    raw = input(
+        "투자 방식을 선택하세요 (1: 단기, 2: 장기, 3: 단기+장기, Enter시 단기): "
+    ).strip()
+    mapping = {"1": "SHORT", "2": "LONG", "3": "BOTH", "": "SHORT"}
+    return mapping.get(raw, "SHORT")
+
+
 def main():
 
     import sys
@@ -682,10 +854,14 @@ def main():
 
     budget = prompt_for_budget()
     additional_symbols = prompt_for_additional_symbols()
+    max_selected_stocks = prompt_for_selected_stock_count()
+    investment_horizon = prompt_for_investment_horizon()
     system = AITradingSystemKI(
         trading_budget=budget,
         recipient_email="kswkmy7556@gmail.com",
         additional_symbols=additional_symbols,
+        max_selected_stocks=max_selected_stocks,
+        investment_horizon=investment_horizon,
     )
 
     if test_mode:

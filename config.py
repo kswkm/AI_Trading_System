@@ -94,6 +94,20 @@ LOG_FILE = os.getenv("LOG_FILE", "trading_system.log")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL", "kswkmy7556@gmail.com")
 EMAIL_CHECK_INTERVAL = int(os.getenv("EMAIL_CHECK_INTERVAL", "30"))
 
+# ============================================================================
+# AI 신뢰도 분석 설정 (DART/SEC 공시 + 뉴스 + Ollama)
+# ============================================================================
+AI_RELIABILITY_ENABLED = _as_bool(os.getenv("AI_RELIABILITY_ENABLED"), default=True)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
+DART_API_KEY = os.getenv("DART_API_KEY", "")
+SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "AI_Trading_System kswkmy7556@gmail.com")
+AI_NEWS_LIMIT = int(os.getenv("AI_NEWS_LIMIT", "5"))
+AI_FILING_DAYS = int(os.getenv("AI_FILING_DAYS", "30"))
+AI_CACHE_TTL_HOURS = int(os.getenv("AI_CACHE_TTL_HOURS", "12"))
+AI_FILING_EXCERPT_COUNT = int(os.getenv("AI_FILING_EXCERPT_COUNT", "2"))
+OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
+
 
 def validate_runtime_config(require_live_trading: bool = True):
     """필수 환경 변수를 검증합니다."""
@@ -109,8 +123,15 @@ def validate_runtime_config(require_live_trading: bool = True):
             + ". Check your .env file or deployment settings."
         )
 
+    warnings = []
+    if AI_RELIABILITY_ENABLED:
+        if not DART_API_KEY:
+            warnings.append("⚠️ DART_API_KEY가 없어 국내 종목 AI 신뢰도 분석 근거가 제한됩니다.")
+        if not SEC_USER_AGENT:
+            warnings.append("⚠️ SEC_USER_AGENT가 없어 해외 종목 AI 신뢰도 분석 근거가 제한됩니다.")
+
     return {
         "app_env": APP_ENV,
         "mode": "live",
-        "warnings": [],
+        "warnings": warnings,
     }

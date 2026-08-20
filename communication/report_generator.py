@@ -23,7 +23,7 @@ class ReportGenerator:
             if "SELL" in result.get("recommendation", "")
         )
         hold_count = len(analysis_data) - buy_count - sell_count
-        sections = []
+        sections_by_style = {}
 
         for result in analysis_data:
             recommendation = result.get("recommendation", "HOLD")
@@ -42,7 +42,38 @@ class ReportGenerator:
                 f"<li>{escape(str(risk))}</li>"
                 for risk in result.get("risks", [])
             )
-            sections.append(f"""
+
+            ai = result.get("ai_reliability") or {}
+            ai_score = ai.get("reliability_score")
+            ai_verdict = escape(str(ai.get("verdict", "N/A")))
+            ai_reasoning = escape(str(ai.get("reasoning", "근거 부족으로 평가하지 못했습니다.")))
+            ai_risk_items = "".join(
+                f"<li>{escape(str(risk))}</li>"
+                for risk in ai.get("key_risks", [])
+            )
+            ai_source_items = ""
+            for src in ai.get("sources", [])[:5]:
+                date_part = f" ({escape(str(src.get('date')))})" if src.get("date") else ""
+                ai_source_items += (
+                    f"<li>[{escape(str(src.get('source', '')))}] "
+                    f"{escape(str(src.get('title', '')))}{date_part}</li>"
+                )
+            ai_financial_html = "<br>".join(
+                escape(line) for line in str(ai.get("financial_summary") or "").splitlines()
+            )
+            ai_section = f"""
+                <h3>AI 신뢰도 분석 <small>(DART/SEC 공시 + 뉴스 + Ollama)</small></h3>
+                <div class="ai-box">
+                    <p><b>신뢰도 점수:</b> {ai_score if ai_score is not None else 'N/A'}/100
+                       &nbsp;|&nbsp; <b>판정:</b> {ai_verdict}</p>
+                    <p>{ai_reasoning}</p>
+                    {f'<h4>재무 요약</h4><p>{ai_financial_html}</p>' if ai_financial_html else ''}
+                    {f'<h4>AI가 발견한 리스크</h4><ul>{ai_risk_items}</ul>' if ai_risk_items else ''}
+                    {f'<h4>참고 공시/뉴스</h4><ul>{ai_source_items}</ul>' if ai_source_items else ''}
+                </div>
+            """
+
+            sections_by_style.setdefault(result.get("investment_style") or "", []).append(f"""
             <section class="stock {signal_class}">
                 <header>
                     <div>
@@ -61,9 +92,16 @@ class ReportGenerator:
                 <p>{escape(str(result.get('summary', '')))}</p>
                 <h3>긍정 요인</h3><ul>{reasons}</ul>
                 <h3>위험 요소</h3><ul>{risks}</ul>
+                {ai_section}
                 <p class="catalyst">촉매: {escape(str(result.get('catalyst', 'N/A')))}</p>
             </section>
             """)
+
+        grouped_sections_html = ""
+        for style, cards in sections_by_style.items():
+            if style:
+                grouped_sections_html += f'<h2 class="style-title">{escape(style)} 투자 추천 종목</h2>'
+            grouped_sections_html += "".join(cards)
 
         generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return f"""
@@ -95,6 +133,9 @@ class ReportGenerator:
         .metrics span {{ color: #637381; font-size: 12px; }}
         .stock h3 {{ font-size: 14px; margin-bottom: 4px; }}
         .stock ul {{ margin-top: 4px; }}
+        .ai-box {{ background: #eef5f3; border: 1px solid #cfe3dd; border-radius: 6px; padding: 12px 16px; margin: 10px 0; }}
+        .ai-box h4 {{ font-size: 13px; margin: 8px 0 4px; }}
+        .style-title {{ margin: 24px 0 8px; padding: 8px 12px; background: #17324d; color: #fff; border-radius: 6px; font-size: 16px; }}
         .catalyst {{ color: #637381; }}
         footer {{ color: #637381; font-size: 12px; text-align: center; padding: 12px; }}
         @media (max-width: 640px) {{ .stats, .metrics {{ grid-template-columns: repeat(2, 1fr); }} .stock header {{ align-items: flex-start; flex-direction: column; }} }}
@@ -115,7 +156,7 @@ class ReportGenerator:
             <div><b>{sell_count}</b>매도 신호</div>
             <div><b>{hold_count}</b>보유 신호</div>
         </section>
-        {''.join(sections)}
+        {grouped_sections_html}
         <footer>최종 투자 판단과 위험 관리는 사용자 책임입니다.</footer>
     </main>
 </body>
